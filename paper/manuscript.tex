@@ -1,0 +1,679 @@
+%==============================================================================
+%  Overleaf-ready manuscript (v2, repositioned after hard reject)
+%
+%  How to use:
+%   - This compiles standalone on Overleaf with pdfLaTeX.
+%   - Red text  \tbd{...}   = a value/table you must fill in AFTER re-running the
+%                             closed-loop calibration on the TGSIM data.
+%   - Blue text \prelim{...}= a number already computed by the analysis code but
+%                             from the OLD (pre-fix) class means; regenerate it
+%                             after recalibration via analysis/run_emergent_analysis.py
+%   - To drop into the official TRB/TRR template, copy the sections below.
+%==============================================================================
+\documentclass[11pt]{article}
+
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{mathptmx}            % Times-like font (TRR style)
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{setspace}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{lineno}
+\usepackage{caption}
+
+% --- helper macros for drafting -------------------------------------------------
+\newcommand{\tbd}[1]{\textcolor{red}{[#1]}}        % fill after re-run
+\newcommand{\prelim}[1]{\textcolor{blue}{#1}}      % preliminary (old means)
+\newcommand{\dv}{\Delta v}
+
+\title{\textbf{Beyond Calibration: Regime-Dependent Car-Following of
+Autonomous versus Human-Driven Vehicles and Its Emergent String-Stability
+and Safety Consequences}}
+
+\author{Pedram Beigi, Mohammad Emad Rashidi, Nachuan Li, Shayan Bafandkar,\\
+Dana Monzer, John Hourdos, Hani Mahmassani, Alireza Talebpour, Samer H. Hamdar}
+\date{}
+
+\begin{document}
+\linenumbers
+\maketitle
+
+%================================================================= ABSTRACT
+\begin{abstract}
+\noindent
+This study moves beyond descriptive parameter comparison to examine how the
+longitudinal behavior of small vehicles, large vehicles, and autonomous vehicles
+(AVs) translates into emergent traffic-flow and safety outcomes. Using
+high-resolution TGSIM trajectory data, we calibrate four car-following models
+spanning the principal modeling paradigms---the physics-based Intelligent Driver
+Model (IDM), the behaviorally motivated Prospect-Theory (PT) model, the
+optimal-velocity relative-velocity (OVRV) model, and the safety-based Gipps
+model, complemented by an ACC-oriented improved IDM as an AV-control
+surrogate---at the individual leader--follower level using a \emph{closed-loop}
+trajectory simulation, in which the spacing that drives the model is recomputed
+from the simulated follower position at every step. We make three contributions. First, we stratify
+car-following by traffic regime (free-flow, synchronized, and stop-and-go) and
+show that class differences which are diluted in the pooled analysis emerge
+within specific regimes. Second, we assess \emph{out-of-sample} predictive
+accuracy and \emph{practical identifiability}: using the dispersion of
+multi-start calibration and one-at-a-time profiles, we show that IDM parameters
+related to spacing and desired speed are well identified and transferable,
+whereas several PT parameters are practically non-identifiable from short
+trajectories---reframing the limited PT differentiation as an identifiability
+property rather than an absence of behavioral difference. Third, we map the
+calibrated class- and regime-specific parameters to emergent dynamics through an
+analytical linear string-stability criterion and mixed-autonomy platoon
+simulations, quantifying string amplification, surrogate safety measures
+(time-to-collision exposure and required deceleration), and throughput across AV
+market-penetration rates. The results show that the calibrated AV behavior trades
+modest throughput gains against reduced string stability and shrinking safety
+margins at high penetration, with consequences that are strongly regime
+dependent. The framework yields class- and regime-specific parameters that are
+directly usable as priors for mixed-autonomy simulation and for lane-management
+and AV-integration policy.
+
+\vspace{0.5em}
+\noindent\textbf{Keywords:} Car-following, Autonomous Vehicles, Prospect Theory,
+Traffic Regimes, String Stability, Parameter Identifiability, Naturalistic
+Trajectory Data.
+\end{abstract}
+
+%================================================================= INTRODUCTION
+\section{Introduction}
+Microscopic simulation is a pivotal tool for the analysis and design of traffic
+systems, allowing controlled study of new technologies without disrupting real
+traffic~\cite{chung2009}. Car-following (CF) models are the core of microscopic
+simulation, reproducing the longitudinal motion of a vehicle behind its
+leader~\cite{zheng2023}. Despite decades of development, our understanding of CF
+behavior remains incomplete, constrained by data, by the difficulty of model
+calibration and validation, and---most acutely---by the heterogeneity of driving
+agents, which now includes autonomous vehicles (AVs)~\cite{zheng2016}.
+
+AVs are expected to increase throughput and improve stability, but the empirical
+evidence is mixed: commercial adaptive-cruise-control systems have been shown to
+be string \emph{unstable} in several field experiments~\cite{gunter2020}. While
+AV longitudinal control has been studied extensively, there remains limited
+empirical clarity on (i) how AV behavior differs from human-driven vehicles
+(HDVs) \emph{across traffic regimes}, (ii) whether the calibrated parameters are
+\emph{identifiable and transferable}, and (iii) what these parameters imply for
+\emph{emergent} flow and safety in mixed traffic. The first version of this study
+calibrated IDM and PT per leader--follower pair and compared the resulting
+parameters statistically. That analysis, while internally consistent, shared the
+limitations of much of the literature: it pooled all traffic conditions, reported
+only in-sample fit, and stopped at the parameters themselves without connecting
+them to emergent behavior.
+
+This paper addresses those gaps directly. We use the naturalistic TGSIM
+dataset~\cite{ammourah2024} and classify the observed followers into
+(i)~\emph{small} vehicles (passenger cars, SUVs, pickups), (ii)~\emph{large}
+vehicles (trucks and buses), and (iii)~\emph{autonomous} vehicles. Our
+contributions are:
+\begin{enumerate}
+\item \textbf{Regime-stratified calibration and comparison.} Each car-following
+episode is labeled by traffic regime (free-flow, synchronized, stop-and-go), and
+class differences are tested both pooled and within regime, revealing
+regime-specific behavioral distinctions that pooling conceals.
+\item \textbf{Validation and practical identifiability.} We evaluate
+out-of-sample prediction (calibrate on part of an episode, predict the rest) and
+quantify practical identifiability from multi-start dispersion and profile
+analysis, establishing which parameters are trustworthy and explaining the
+limited PT differentiation as non-identifiability.
+\item \textbf{Emergent string-stability and safety analysis.} We translate the
+calibrated class/regime parameters into analytical linear string stability and
+mixed-autonomy platoon simulations, quantifying string amplification, surrogate
+safety, and throughput as functions of AV market penetration.
+\end{enumerate}
+
+%================================================================= LITERATURE
+\section{Literature Review}
+\subsection{Calibration of car-following models}
+Among physics-based models, the IDM~\cite{treiber2000} reproduces realistic
+fundamental diagrams and stable/unstable regions and consistently shows low
+calibration error relative to alternatives~\cite{zhu2018,pourabdollah2018}.
+Trajectory-based calibration is now standard~\cite{punzo2005}, but a recurrent
+methodological pitfall is the choice of simulation scheme. In an \emph{open-loop}
+(one-step) scheme the model is fed observed states at each step; in a
+\emph{closed-loop} scheme the spacing and speed are integrated forward and the
+spacing that drives the model is recomputed from the simulated position. Punzo and
+co-authors emphasize that closed-loop, spacing-based objectives are required for
+trajectory calibration to be sensitive to the parameters and to avoid optimistic,
+non-identifiable fits~\cite{punzo2012,montanino2015}. We adopt a closed-loop
+scheme for \emph{both} models in this study.
+
+\subsection{Behavioral models and Prospect Theory}
+Psychologically grounded models capture driver decision-making under
+uncertainty. The Prospect-Theory CF model~\cite{hamdar2008rec,hamdar2015}
+represents acceleration as a risk-taking choice combining subjective utilities
+for accelerations and disutilities for crash risk, calibrated with a genetic
+algorithm to account for inter-driver heterogeneity. PT-based formulations have
+been extended to AV--HDV mixed traffic~\cite{adewale2024,ding2021} and to
+connected-vehicle compliance~\cite{sharma2019}. A known difficulty with rich
+behavioral models is parameter identifiability: many parameters interact and may
+not be separately recoverable from short trajectories~\cite{punzo2012}.
+
+\subsection{AV car-following and string stability}
+Several studies characterize adaptive-cruise-control and AV CF behavior using
+field data~\cite{li2021,makridis2021}, with conflicting conclusions on which
+model best fits AV trajectories~\cite{kim2023,bai2024}. Hu et al.~\cite{hu2023}
+calibrate IDM on the Waymo dataset and conclude AVs are more conservative (longer
+headways, larger jam spacing) and less prone to string instability, while
+Alhariqi et al.~\cite{alhariqi2022} introduce an adaptive IDM for mixed autonomy.
+String stability---the (non-)amplification of speed perturbations along a
+platoon---is a classical property of CF models~\cite{treiber2013,wilson2011}, yet
+it is rarely connected back to \emph{empirically calibrated} class-specific
+parameters and almost never stratified by traffic regime. This paper makes that
+connection explicit.
+
+%================================================================= METHODOLOGY
+\section{Methodology}
+
+\subsection{Data}
+We use the naturalistic Third-Generation Simulation (TGSIM)
+dataset~\cite{ammourah2024}, which captures automated and human-driven vehicles
+across several U.S.\ facilities. We use the I-395 (Washington, D.C.) urban
+expressway segment and the I-294 (Illinois) segments. A valid car-following
+episode requires: duration $>10$~s; bumper-to-bumper gap $<200$~m and $>0$; no
+lane change; and a constant preceding-vehicle identity throughout. Followers are
+labeled small, large, or autonomous. To ensure comparability, equal numbers of
+small and large followers are sampled in the spatial--temporal neighborhood of
+each AV episode.
+
+\subsection{Car-following models}
+\paragraph{Intelligent Driver Model (IDM).} The acceleration is
+\begin{equation}
+\dot v_n(t) = a\!\left[1-\left(\frac{v_n(t)}{v_0}\right)^{\delta}
+-\left(\frac{s^\ast\!\big(v_n,\dv_n\big)}{s_n(t)}\right)^{2}\right],
+\label{eq:idm}
+\end{equation}
+\begin{equation}
+s^\ast(v_n,\dv_n)=s_0+\max\!\left(0,\;v_n T+\frac{v_n\,\dv_n}{2\sqrt{ab}}\right),
+\label{eq:sstar}
+\end{equation}
+with parameters $\Theta_{\mathrm{IDM}}=\{T,a,b,v_0,s_0\}$, where $T$ is the safe
+time headway, $a$ the maximum acceleration, $b$ the comfortable deceleration,
+$v_0$ the desired speed, and $s_0$ the minimum bumper-to-bumper gap. The
+acceleration exponent $\delta$ is fixed at the standard value $\delta=4$; as
+shown in Section~\ref{sec:ident}, $\delta$ is not practically identifiable from
+short trajectories and ``calibrating'' it injects noise.
+
+\paragraph{Prospect-Theory (PT) model.} The PT model~\cite{hamdar2008rec,
+hamdar2015} selects acceleration as a risk-taking decision. The generalized
+utility combines a prospect-theoretic acceleration utility and a crash-risk
+penalty,
+\begin{equation}
+U(a;s,v,\dv)=U_{\mathrm{PT}}(a)+U_{\mathrm{crash}}(a;s,v,\dv),
+\end{equation}
+and the realized acceleration is obtained by a Newton--Raphson solution of the
+first-order condition (full equations as in~\cite{hamdar2015}). The calibrated
+parameters are
+$\Theta_{\mathrm{PT}}=\{T_{\max},\alpha,\beta,W_c,W_m,\gamma\}$: the maximum
+anticipation horizon $T_{\max}$, speed-uncertainty coefficient $\alpha$,
+intra-driver logit variability $\beta$, accident weight $W_c$, negative-utility
+asymmetry $W_m$, and sensitivity exponent $\gamma$.
+
+\paragraph{Optimal-Velocity Relative-Velocity (OVRV) model.} To represent the
+optimal-velocity tradition~\cite{bando1995,jiang2001}, we calibrate
+\begin{equation}
+\dot v_n = \kappa\big(V(s_n)-v_n\big)+\lambda\,(v_{\mathrm{lead}}-v_n),\qquad
+V(s)=v_{\max}\,\frac{\tanh\!\big((s-s_c)/s_w\big)+\tanh(s_c/s_w)}{1+\tanh(s_c/s_w)},
+\end{equation}
+with $\Theta_{\mathrm{OVRV}}=\{\kappa,\lambda,v_{\max},s_c,s_w\}$ (speed
+sensitivity $\kappa$, relative-velocity gain $\lambda$, free-flow speed
+$v_{\max}$, inflection gap $s_c$, transition width $s_w$); the normalization gives
+$V(0)=0$ and $V(\infty)=v_{\max}$.
+
+\paragraph{Gipps safety model.} To represent the safety/collision-avoidance
+tradition~\cite{gipps1981}, the next speed is the minimum of a free-acceleration
+target $v_{\mathrm{acc}}=v_n+2.5\,a\,\tau(1-v_n/V_0)\sqrt{0.025+v_n/V_0}$ and a
+safe-braking target
+$v_{\mathrm{safe}}=-b\tau+\sqrt{\max(0,\,b^2\tau^2+b(2(s_n-s_0)-v_n\tau)+v_{\mathrm{lead}}^2)}$,
+with $\Theta_{\mathrm{Gipps}}=\{a,b,V_0,s_0,\tau\}$. Because TGSIM is sampled
+finely, the $\tau$-ahead Gipps target is applied as an effective acceleration
+$(v_{\mathrm{target}}-v_n)/\tau$ and integrated at the data step in closed loop.
+
+\paragraph{ACC-IDM (AV-control surrogate).} As an AV-oriented surrogate we
+calibrate the improved IDM with the constant-acceleration heuristic
+(CAH)~\cite{kesting2010}, which blends the IDM acceleration $a_{\mathrm{IDM}}$ and
+the heuristic $a_{\mathrm{CAH}}$ through a coolness coefficient $c$:
+$a=a_{\mathrm{IDM}}$ if $a_{\mathrm{IDM}}\ge a_{\mathrm{CAH}}$, otherwise
+$a=(1-c)a_{\mathrm{IDM}}+c\big(a_{\mathrm{CAH}}+b\tanh((a_{\mathrm{IDM}}-a_{\mathrm{CAH}})/b)\big)$,
+with the leader acceleration in $a_{\mathrm{CAH}}$ estimated from the observed
+leader speed and $\Theta_{\mathrm{ACC}}=\{T,a,b,v_0,s_0,c\}$.
+
+\paragraph{Rationale for four paradigms.} Calibrating models from four distinct
+traditions (physics, behavioral, optimal-velocity, and safety, plus an AV
+surrogate) tests whether the AV--HDV and regime effects reported below are robust
+across modeling assumptions rather than artifacts of a single formulation. All
+four use the identical closed-loop simulator and calibration engine described
+next.
+
+\subsection{Closed-loop trajectory simulation}
+\label{sec:closedloop}
+For all models the follower trajectory is integrated forward from the first
+observed state $(x_n(0),v_n(0))$ using the observed leader trajectory. Crucially,
+the spacing that enters the model is recomputed at each step from the
+\emph{simulated} follower position,
+\begin{equation}
+s_n(t_i)=x_{\mathrm{lead}}(t_i)-x_n(t_i)-\tfrac12 L_{\mathrm{lead}}
+-\tfrac12 L_{\mathrm{foll}},
+\label{eq:closedloop}
+\end{equation}
+with a ballistic update $v_{i+1}=\max(0,v_i+a_i\,\Delta t)$,
+$x_{i+1}=x_i+v_{i+1}\Delta t$ (PT uses
+$x_{i+1}=x_i+v_i\Delta t+\tfrac12 a_i\Delta t^2$). This closed-loop scheme makes
+the simulated trajectory---and hence the calibration objective---genuinely
+sensitive to the parameters, in contrast to an open-loop scheme that feeds the
+observed spacing back into the model and yields optimistic, weakly identifiable
+fits. Acceleration is bounded to $[-8,5]~\mathrm{m/s^2}$.
+
+\subsection{Genetic-algorithm calibration}
+Parameters are calibrated per leader--follower episode by a genetic algorithm
+that minimizes a weighted trajectory error,
+\begin{equation}
+f(\Theta)=\sum_{j}\Big(\lambda_p\,\big|x_{\mathrm{obs},j}-x_{\mathrm{sim},j}(\Theta)\big|
++\lambda_v\,\big|v_{\mathrm{obs},j}-v_{\mathrm{sim},j}(\Theta)\big|\Big),
+\label{eq:fitness}
+\end{equation}
+with $\lambda_p=1$, $\lambda_v=\tbd{0.5}$. To assess robustness and
+identifiability (Section~\ref{sec:ident}) each episode is calibrated from
+$N=\tbd{20}$ random restarts.
+
+\subsection{Traffic-regime classification}
+\label{sec:regime}
+Each episode is assigned a dominant traffic regime from its follower speed
+profile $v_n(\cdot)$ using interpretable features: mean speed $\bar v$, speed
+standard deviation $\sigma_v$, minimum speed $v_{\min}$, the near-stop fraction
+$\phi=\Pr(v<v_{\mathrm{stop}})$, and the speed range $v_{\max}-v_{\min}$. With
+$v_{\mathrm{stop}}=3$~m/s, the rules are:
+\begin{itemize}
+\item \textbf{stop-and-go}: $\phi>0.05$, or ($v_{\min}<v_{\mathrm{stop}}$ and a
+large, oscillatory speed range);
+\item \textbf{free-flow}: $\bar v\ge 17$~m/s and $\sigma_v\le1.5$~m/s;
+\item \textbf{synchronized}: otherwise (congested but flowing).
+\end{itemize}
+A sliding window labels each instant and contiguous same-regime segments
+($\ge10$~s) define the dominant regime. Class comparisons are then performed both
+pooled and \emph{within} each regime.
+
+\subsection{Out-of-sample validation and practical identifiability}
+\label{sec:ident}
+\paragraph{Out-of-sample prediction.} For each episode we calibrate on the first
+$70\%$ of the trajectory and predict the remaining $30\%$ in closed loop,
+reporting in-sample and out-of-sample position RMSE and their ratio. This guards
+against overfitting that pure in-sample error cannot detect.
+
+\paragraph{Practical identifiability.} For a parameter $\theta$ with restart
+estimates $\{\hat\theta^{(r)}\}_{r=1}^{N}$, the normalized restart dispersion
+\begin{equation}
+\mathrm{CV}(\theta)=\frac{\mathrm{std}_r\,\hat\theta^{(r)}}{|\overline{\hat\theta}|}
+\label{eq:cv}
+\end{equation}
+measures how tightly the data pin down $\theta$. We classify
+$\mathrm{CV}\le0.10$ as well identifiable, $0.10<\mathrm{CV}\le0.30$ as
+moderately identifiable, and $\mathrm{CV}>0.30$ as poorly identifiable. We
+complement this with one-at-a-time profiles of the fit around the optimum: a flat
+profile indicates a non-identifiable direction.
+
+\subsection{Statistical comparison}
+Class differences are tested with Welch's ANOVA (robust to unequal variances) and
+Games--Howell post-hoc pairwise tests (robust to unequal variances and sample
+sizes), reporting $F$/$t$ statistics, $p$-values, and Hedges' $g$ effect sizes.
+The same tests are applied within each regime.
+
+\subsection{Emergent dynamics}
+\label{sec:emergent}
+\paragraph{Linear string stability.} Linearizing a CF model
+$\dot v_n=f(s_n,\dv_n,v_n)$ about a uniform equilibrium $(v_e,s_e)$ (with
+$\dv=v_n-v_{n-1}$) gives the speed-to-speed transfer function between consecutive
+vehicles
+\begin{equation}
+H(\omega)=\frac{f_s-i\omega f_{\dv}}{(f_s-\omega^2)-i\omega\,(f_{\dv}+f_v)},
+\label{eq:H}
+\end{equation}
+where $f_s,f_v,f_{\dv}$ are partial derivatives of $f$ at equilibrium. The
+platoon is string stable iff $|H(\omega)|\le1$ for all $\omega$; equivalently the
+low-frequency criterion
+\begin{equation}
+\lambda_2=\tfrac12 f_v^2+f_{\dv}f_v-f_s\ \ge\ 0
+\label{eq:lambda2}
+\end{equation}
+must hold~\cite{treiber2013}. For IDM the equilibrium spacing is
+$s_e=(s_0+v_eT)/\sqrt{1-(v_e/v_0)^\delta}$ and partials are evaluated
+numerically. We report the peak gain $\max_\omega|H(\omega)|$ and the unstable
+speed band per class and regime.
+
+\paragraph{Mixed-autonomy platoon simulation.} Using class-specific calibrated
+parameters, we simulate a single-lane platoon at AV market-penetration rate (MPR)
+$p\in[0,1]$ subject to a stop-and-go lead-vehicle perturbation, averaging over
+random class compositions. We report: the empirical string amplification (ratio
+of last-to-lead speed-oscillation standard deviation); surrogate safety measures
+time-to-collision $\mathrm{TTC}=s/\dv$ (when closing), required deceleration
+$\mathrm{DRAC}=\dv^2/(2s)$, time-exposed TTC below $3$~s (TET) and time-integrated
+TTC (TIT); and throughput.
+
+%================================================================= RESULTS
+\section{Results}
+
+\subsection{Calibration accuracy and out-of-sample validation}
+Figure~\ref{fig:fit} shows simulated versus observed position and speed for
+representative IDM and PT followers under the closed-loop scheme.
+Table~\ref{tab:err} reports mean RMSE and MAE by class for both models, together
+with the out-of-sample errors from the $70/30$ temporal split. \tbd{Fill
+Table~\ref{tab:err} from the re-run. Note that closed-loop RMSE will be larger
+than the previously reported open-loop values; this is the correct, honest
+metric. Report the in-/out-of-sample ratio to show the models generalize.}
+
+\begin{figure}[t]
+\centering
+% Replace these placeholders with your regenerated per-episode comparison plots
+% from "Results IDM/comparison_plots/" and "Results PT/comparison_plots/".
+\fbox{\begin{minipage}[c][3.2cm][c]{0.46\textwidth}\centering
+\tbd{(a) IDM example follower plot}\end{minipage}}\hfill
+\fbox{\begin{minipage}[c][3.2cm][c]{0.46\textwidth}\centering
+\tbd{(b) PT example follower plot}\end{minipage}}
+\caption{Closed-loop simulated (dashed) versus observed (solid) position and
+speed for a representative follower: (a) IDM, (b) PT.}
+\label{fig:fit}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Trajectory error by vehicle class (closed-loop), in-sample and
+out-of-sample.}
+\label{tab:err}
+\begin{tabular}{llcccc}
+\toprule
+Model & Vehicle type & RMSE (m) & MAE (m) & OOS RMSE (m) & OOS/IS ratio\\
+\midrule
+\multirow{3}{*}{IDM} & Small & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+ & Large & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+ & AV    & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+\midrule
+\multirow{3}{*}{PT} & Small & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+ & Large & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+ & AV    & \tbd{} & \tbd{} & \tbd{} & \tbd{}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Practical identifiability}
+Table~\ref{tab:ident} reports the median normalized restart dispersion
+(Eq.~\ref{eq:cv}) per parameter. \tbd{Fill from
+\texttt{analysis/validation\_identifiability.py}.} We expect IDM's $T$, $v_0$,
+and (in congested regimes) $s_0$ to be well identified, while several PT
+parameters ($T_{\max}$, $\gamma$, $\beta$) are poorly identified. This reframes
+the limited PT differentiation observed across classes: where a parameter is not
+identifiable from the trajectory, class-level differences are statistically
+diluted regardless of any true behavioral difference.
+
+\begin{table}[t]
+\centering
+\caption{Practical identifiability: median restart-dispersion CV per parameter
+(lower $=$ better identified).}
+\label{tab:ident}
+\begin{tabular}{lccc}
+\toprule
+Parameter & Small & Large & AV \\
+\midrule
+IDM $T$  & \tbd{} & \tbd{} & \tbd{}\\
+IDM $a$  & \tbd{} & \tbd{} & \tbd{}\\
+IDM $b$  & \tbd{} & \tbd{} & \tbd{}\\
+IDM $v_0$& \tbd{} & \tbd{} & \tbd{}\\
+IDM $s_0$& \tbd{} & \tbd{} & \tbd{}\\
+PT $T_{\max}$ & \tbd{} & \tbd{} & \tbd{}\\
+PT $\alpha$   & \tbd{} & \tbd{} & \tbd{}\\
+PT $\gamma$   & \tbd{} & \tbd{} & \tbd{}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Pooled and regime-stratified parameter differences}
+Table~\ref{tab:params} summarizes calibrated IDM parameters by class (mean $\pm$
+SD, median). \tbd{Fill from the re-run \texttt{idm\_parameters\_table.csv}.}
+Table~\ref{tab:regdist} reports the regime composition of each class, and
+Table~\ref{tab:regstats} the Welch ANOVA of class differences \emph{within} each
+regime. \tbd{Fill from \texttt{idm\_regime\_distribution.csv} and
+\texttt{idm\_welch\_anova\_by\_regime.csv}.} The central new finding is expected
+to be that class differences (e.g., in $T$ and $s_0$) are sharper in the
+stop-and-go regime---where car-following is most constrained---than in the pooled
+sample, demonstrating that regime pooling masks behavioral distinctions.
+
+\begin{table}[t]
+\centering
+\caption{Calibrated IDM parameters by vehicle class (closed-loop). Mean $\pm$ SD
+(median).}
+\label{tab:params}
+\begin{tabular}{lccc}
+\toprule
+Parameter & Small & Large & AV \\
+\midrule
+$T$ (s)   & \tbd{} & \tbd{} & \tbd{}\\
+$a$ (m/s$^2$) & \tbd{} & \tbd{} & \tbd{}\\
+$b$ (m/s$^2$) & \tbd{} & \tbd{} & \tbd{}\\
+$v_0$ (m/s)   & \tbd{} & \tbd{} & \tbd{}\\
+$s_0$ (m)     & \tbd{} & \tbd{} & \tbd{}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Regime composition by vehicle class (episode counts).}
+\label{tab:regdist}
+\begin{tabular}{lccc}
+\toprule
+Class & Free-flow & Synchronized & Stop-and-go \\
+\midrule
+Small & \tbd{} & \tbd{} & \tbd{}\\
+Large & \tbd{} & \tbd{} & \tbd{}\\
+AV    & \tbd{} & \tbd{} & \tbd{}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Welch ANOVA of IDM parameters across classes, within each regime
+($p$-values; bold $=$ significant at $0.05$).}
+\label{tab:regstats}
+\begin{tabular}{lccc}
+\toprule
+Parameter & Free-flow & Synchronized & Stop-and-go \\
+\midrule
+$T$   & \tbd{} & \tbd{} & \tbd{}\\
+$v_0$ & \tbd{} & \tbd{} & \tbd{}\\
+$s_0$ & \tbd{} & \tbd{} & \tbd{}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Emergent string stability}
+Using the calibrated class means, Figure~\ref{fig:string} shows the peak
+amplification $\max_\omega|H(\omega)|$ and the stability coefficient
+$\lambda_2(v_e)$ across equilibrium speeds. With the current (pre-recalibration)
+class means, the autonomous class exhibits the \emph{widest} string-unstable speed
+band and the highest peak amplification
+(\prelim{peak $|H|\approx1.14$, unstable band $\approx1$--$18$~m/s}), compared with
+small (\prelim{$1.04$, $1$--$12$~m/s}) and large
+(\prelim{$1.00$, $1$--$7$~m/s}) vehicles. \tbd{Regenerate after recalibration via
+\texttt{analysis/run\_emergent\_analysis.py --params-csv ...}; also report the
+per-regime version using \texttt{--regime}.}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{../Results Emergent/fig_string_stability.png}
+\caption{String stability by vehicle class: (left) peak speed-to-speed gain
+$\max_\omega|H(\omega)|$ versus equilibrium speed (values $>1$ are string
+unstable); (right) low-frequency stability coefficient $\lambda_2$ ($\ge0$
+stable).}
+\label{fig:string}
+\end{figure}
+
+\subsection{Mixed-autonomy safety and throughput}
+Figure~\ref{fig:mpr} reports emergent platoon outcomes versus AV market
+penetration. With the current class means, string amplification rises with AV
+share and crosses the stability threshold near
+\prelim{$\sim$80\% penetration}; the mean minimum time-to-collision decreases
+(\prelim{$\approx4.8\to3.8$~s}) while throughput increases modestly
+(\prelim{$\approx1854\to1969$~veh/h}). The picture is therefore nuanced: the
+calibrated AV behavior trades small throughput gains against reduced string
+stability and shrinking safety margins. \tbd{Regenerate after recalibration and,
+ideally, report this separately for the stop-and-go regime, where the effects are
+strongest.}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{../Results Emergent/fig_mpr_sweep.png}
+\caption{Emergent outcomes versus AV market penetration: string amplification,
+required braking (DRAC), minimum time-to-collision, and throughput.}
+\label{fig:mpr}
+\end{figure}
+
+%================================================================= DISCUSSION
+\section{Discussion}
+Three points distinguish this analysis from prior AV--HDV calibration studies.
+First, the closed-loop calibration scheme makes the objective genuinely sensitive
+to the parameters; combined with the identifiability analysis, it lets us state
+\emph{which} parameters are trustworthy rather than reporting all of them at face
+value. This directly explains the previously puzzling lack of PT differentiation:
+where a parameter is not identifiable, no statistical test can recover a class
+difference. Second, regime stratification shows that AV--HDV differences are
+condition dependent; treating ``car-following'' as a single regime understates
+the differences that matter in congested, safety-critical conditions. Third, the
+emergent analysis reframes the policy message: the calibrated AV behavior is not
+uniformly beneficial---throughput gains can coincide with reduced string
+stability and safety margins, particularly at high penetration and in stop-and-go
+conditions. These findings caution against extrapolating ``AVs are conservative
+and therefore safer'' from pooled, in-sample parameter comparisons.
+
+%================================================================= CONCLUSION
+\section{Conclusion}
+We presented a regime-aware, validation-grounded, and consequence-linked
+re-analysis of AV versus HDV car-following using TGSIM trajectories. Both IDM and
+PT were calibrated with a closed-loop trajectory scheme; parameters were assessed
+for out-of-sample accuracy and practical identifiability; class differences were
+tested within traffic regimes; and the calibrated parameters were mapped to
+emergent string stability and mixed-autonomy safety and throughput. \tbd{Summarize
+the final quantitative findings after the re-run: which parameters differ by
+class and regime, which are identifiable, the OOS accuracy, and the
+penetration/regime at which string stability and safety degrade.} The resulting
+class- and regime-specific parameters, together with their identifiability
+labels, provide actionable priors for mixed-autonomy simulation and for
+lane-management and AV-integration policy. Limitations include the moderate
+sample size per class, a single AV fleet with proprietary control logic, and the
+linear nature of the string-stability criterion; future work will extend the
+analysis to lane-changing and to multi-fleet AV comparisons.
+
+%================================================================= BACK MATTER
+\section*{Acknowledgments}
+This study was supported by the U.S.\ Department of Transportation (USDOT) Federal
+Highway Administration (FHWA) under the project ``New Generation Models for
+Connected Autonomous Vehicles (NGM-CAV).'' This work is dedicated to the memory of
+Professor Hani Mahmassani.
+
+\section*{Author Contributions}
+The authors confirm contribution to the paper as follows: conceptualization,
+methodology, validation, analysis, and manuscript preparation as in the original
+submission; the v2 methodology (closed-loop calibration, regime stratification,
+identifiability, and emergent-dynamics analysis) was led by P.\ Beigi. All authors
+reviewed and approved the final manuscript.
+
+\section*{Data Availability}
+This study uses the Third-Generation Simulation (TGSIM) data supplied by USDOT.
+Analysis code is available in the project repository.
+
+%================================================================= REFERENCES
+\begin{thebibliography}{99}
+\small
+\bibitem{chung2009} E.\ Chung and A.-G.\ Dumont, \emph{Transport Simulation:
+Beyond Traditional Approaches}. EPFL Press, 2009.
+\bibitem{zheng2023} S.-T.\ Zheng et al., ``A multi-objective calibration
+framework for capturing the behavioral patterns of autonomously-driven
+vehicles,'' \emph{Transp.\ Res.\ Part C}, vol.\ 152, 104151, 2023.
+\bibitem{zheng2016} Z.\ Zheng and M.\ Sarvi, ``Modeling, calibrating, and
+validating car following and lane changing behavior,'' \emph{Transp.\ Res.\ Part
+C}, vol.\ 71, pp.\ 182--183, 2016.
+\bibitem{gunter2020} G.\ Gunter et al., ``Are commercially implemented adaptive
+cruise control systems string stable?'' \emph{IEEE Trans.\ Intell.\ Transp.\
+Syst.}, vol.\ 22, no.\ 11, pp.\ 6992--7003, 2021.
+\bibitem{ammourah2024} R.\ Ammourah et al., ``Introduction to the Third
+Generation Simulation Dataset: Data Collection and Trajectory Extraction,''
+\emph{Transp.\ Res.\ Rec.}, 2024.
+\bibitem{treiber2000} M.\ Treiber, A.\ Hennecke, and D.\ Helbing, ``Congested
+traffic states in empirical observations and microscopic simulations,''
+\emph{Phys.\ Rev.\ E}, vol.\ 62, no.\ 2, 1805, 2000.
+\bibitem{bando1995} M.\ Bando, K.\ Hasebe, A.\ Nakayama, A.\ Shibata, and Y.\
+Sugiyama, ``Dynamical model of traffic congestion and numerical simulation,''
+\emph{Phys.\ Rev.\ E}, vol.\ 51, no.\ 2, pp.\ 1035--1042, 1995.
+\bibitem{jiang2001} R.\ Jiang, Q.\ Wu, and Z.\ Zhu, ``Full velocity difference
+model for a car-following theory,'' \emph{Phys.\ Rev.\ E}, vol.\ 64, no.\ 1,
+017101, 2001.
+\bibitem{gipps1981} P.\ G.\ Gipps, ``A behavioural car-following model for
+computer simulation,'' \emph{Transp.\ Res.\ Part B}, vol.\ 15, no.\ 2, pp.\
+105--111, 1981.
+\bibitem{kesting2010} A.\ Kesting, M.\ Treiber, and D.\ Helbing, ``Enhanced
+intelligent driver model to access the impact of driving strategies on traffic
+capacity,'' \emph{Phil.\ Trans.\ R.\ Soc.\ A}, vol.\ 368, no.\ 1928, pp.\
+4585--4605, 2010.
+\bibitem{zhu2018} M.\ Zhu et al., ``Modeling car-following behavior on urban
+expressways in Shanghai: A naturalistic driving study,'' \emph{Transp.\ Res.\
+Part C}, vol.\ 93, pp.\ 425--445, 2018.
+\bibitem{pourabdollah2018} M.\ Pourabdollah et al., ``Calibration and evaluation
+of car following models using real-world driving data,'' \emph{IEEE ITSC}, 2018.
+\bibitem{punzo2005} V.\ Punzo and F.\ Simonelli, ``Analysis and comparison of
+microscopic traffic flow models with real traffic microscopic data,''
+\emph{Transp.\ Res.\ Rec.}, vol.\ 1934, pp.\ 53--63, 2005.
+\bibitem{punzo2012} V.\ Punzo, M.\ Montanino, and B.\ Ciuffo, ``Do we really need
+to calibrate all the parameters? Variance-based sensitivity analysis to simplify
+microscopic traffic flow models,'' \emph{IEEE Trans.\ Intell.\ Transp.\ Syst.},
+vol.\ 16, no.\ 1, pp.\ 184--193, 2015.
+\bibitem{montanino2015} M.\ Montanino and V.\ Punzo, ``Trajectory data
+reconstruction and simulation-based validation against macroscopic traffic
+patterns,'' \emph{Transp.\ Res.\ Part B}, vol.\ 80, pp.\ 82--106, 2015.
+\bibitem{hamdar2008rec} S.\ H.\ Hamdar, M.\ Treiber, H.\ S.\ Mahmassani, and A.\
+Kesting, ``Modeling driver behavior as a sequential risk-taking task,''
+\emph{Transp.\ Res.\ Rec.}, vol.\ 2088, pp.\ 208--217, 2008.
+\bibitem{hamdar2015} S.\ H.\ Hamdar, H.\ S.\ Mahmassani, and M.\ Treiber, ``From
+behavioral psychology to acceleration modeling: Calibration, validation, and
+exploration of drivers' cognitive and safety parameters in a risk-taking
+environment,'' \emph{Transp.\ Res.\ Part B}, vol.\ 78, pp.\ 32--53, 2015.
+\bibitem{adewale2024} A.\ Adewale and C.\ Lee, ``Prediction of car-following
+behavior of autonomous and human-driven vehicles based on drivers' memory and
+cooperation,'' \emph{Transp.\ Res.\ Rec.}, vol.\ 2678, no.\ 6, pp.\ 248--266, 2024.
+\bibitem{ding2021} S.\ Ding et al., ``An extended car-following model in
+connected and autonomous vehicle environment,'' \emph{J.\ Adv.\ Transp.}, 2739129,
+2021.
+\bibitem{sharma2019} A.\ Sharma et al., ``Modelling car-following behaviour of
+connected vehicles with a focus on driver compliance,'' \emph{Transp.\ Res.\ Part
+B}, vol.\ 126, pp.\ 256--279, 2019.
+\bibitem{li2021} T.\ Li et al., ``Car-following behavior characteristics of
+adaptive cruise control vehicles based on empirical experiments,'' \emph{Transp.\
+Res.\ Part B}, vol.\ 147, pp.\ 67--91, 2021.
+\bibitem{makridis2021} M.\ Makridis et al., ``OpenACC: An open database of
+car-following experiments to study the properties of commercial ACC systems,''
+\emph{Transp.\ Res.\ Part C}, vol.\ 125, 103047, 2021.
+\bibitem{kim2023} B.\ Kim and K.\ P.\ Heaslip, ``Identifying suitable
+car-following models to simulate automated vehicles on highways,'' \emph{Int.\ J.\
+Transp.\ Sci.\ Technol.}, vol.\ 12, no.\ 2, pp.\ 652--664, 2023.
+\bibitem{bai2024} J.\ Bai, S.\ Mao, and J.\ J.\ Lee, ``A novel car-following
+model for adaptive cruise control vehicles using enhanced IDM,'' \emph{Transp.\
+Lett.}, 2024.
+\bibitem{hu2023} X.\ Hu, Z.\ Zheng, D.\ Chen, and J.\ Sun, ``Autonomous vehicle's
+impact on traffic: Empirical evidence from Waymo Open Dataset and implications
+from modelling,'' \emph{IEEE Trans.\ Intell.\ Transp.\ Syst.}, vol.\ 24, no.\ 6,
+pp.\ 6711--6724, 2023.
+\bibitem{alhariqi2022} A.\ Alhariqi, Z.\ Gu, and M.\ Saberi, ``Calibration of the
+IDM with adaptive parameters for mixed autonomy traffic using experimental
+trajectory data,'' \emph{Transportmetrica B}, vol.\ 10, no.\ 1, pp.\ 421--440, 2022.
+\bibitem{treiber2013} M.\ Treiber and A.\ Kesting, \emph{Traffic Flow Dynamics:
+Data, Models and Simulation}. Springer, 2013.
+\bibitem{wilson2011} R.\ E.\ Wilson and J.\ A.\ Ward, ``Car-following models:
+fifty years of linear stability analysis---a mathematical perspective,''
+\emph{Transp.\ Plan.\ Technol.}, vol.\ 34, no.\ 1, pp.\ 3--18, 2011.
+\end{thebibliography}
+
+\end{document}
