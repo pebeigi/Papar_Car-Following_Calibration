@@ -131,7 +131,10 @@ RESULTS_DIR = os.path.join(SCRIPT_DIR, "Results IDM" if CALIBRATE_ONLY_NEAR_AVS 
 OUTPUT_EPISODES_CSV = os.path.join(RESULTS_DIR, "idm_calib_episodes_results.csv")
 OUTPUT_SUMMARY_CSV = os.path.join(RESULTS_DIR, "idm_calib_vehicle_type_summary.csv")
 OUTPUT_EPISODES_EXCEL = os.path.join(RESULTS_DIR, "idm_calib_episodes_summary.xlsx")
-PLOT_COMPARISONS = True  # Whether to create comparison plots
+PLOT_COMPARISONS = True  # Per-episode observed vs simulated plots
+PLOT_SUMMARY = True       # Aggregate plots after all episodes are calibrated (distributions, errors, …)
+# None = plot every calibrated episode; set to an int to cap (e.g. 5 for quick runs)
+MAX_PLOT_EPISODES = None
 
 # Vehicle type mapping
 # Type 1: small cars
@@ -1095,6 +1098,7 @@ def plot_episode_comparison(ep: Episode, params: IDMParams, output_path: str):
 
     axes[1].plot(t, v_obs, label="Observed", linewidth=2)
     axes[1].plot(t, v_sim, "--", label="Simulated (IDM)", linewidth=2)
+    axes[1].plot(t, v_lead, ":", label="Leader (Observed)", linewidth=2, alpha=0.9)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Speed (m/s)")
     axes[1].set_title("Speed")

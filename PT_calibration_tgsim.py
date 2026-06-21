@@ -1206,6 +1206,7 @@ def plot_episode_comparison(ep: Episode, params: PTParams, output_path: str):
 
     axes[1].plot(t, v_obs, label="Observed", linewidth=2)
     axes[1].plot(t, v_sim, "--", label="Simulated (PT)", linewidth=2)
+    axes[1].plot(t, v_lead, ":", label="Leader (Observed)", linewidth=2, alpha=0.9)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Speed (m/s)")
     axes[1].set_title("Speed")

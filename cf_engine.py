@@ -22,6 +22,7 @@ Run a model via its thin wrapper, e.g. ``python OVRV_calibration_tgsim.py``.
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import sys
@@ -374,7 +375,7 @@ def process_single_dataset(csv_path, dataset_name, spec: ModelSpec,
 
     ordered = [results[i] for i in sorted(results)]
     if results_dir is not None:
-        _make_sample_plots(to_cal, ordered, spec, results_dir, dataset_name)
+        _make_episode_plots(to_cal, ordered, spec, results_dir, dataset_name)
     return ordered
 
 
@@ -427,22 +428,310 @@ def _kruskal_table(res_df, params) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _make_sample_plots(to_cal, results, spec, results_dir, dataset_name, max_plots=5):
-    """Plot a few calibrated episodes if the spec provides a plotter."""
-    if spec.plot is None or not getattr(idm, "MATPLOTLIB_AVAILABLE", False):
+def generic_episode_plot(spec: ModelSpec, ep, theta: np.ndarray, aux, output_path: str) -> None:
+    """3-panel observed vs simulated plot for any model (position, speed, gap)."""
+    if not getattr(idm, "MATPLOTLIB_AVAILABLE", False):
+        return
+    plt = idm.plt
+    a = _episode_arrays(ep)
+    d = ep.df
+    x_sim, v_sim = spec.simulate(
+        a["t"], a["x_lead"], a["v_lead"],
+        float(a["x_obs"][0]), float(a["v_obs"][0]),
+        a["l_eff"], theta, aux,
+    )
+    ll = float(d["lead_length"].iloc[0]) if "lead_length" in d.columns else 0.0
+    fl = float(d["follower_length"].iloc[0]) if "follower_length" in d.columns else 0.0
+    gap_obs = d["gap"].to_numpy(float) if "gap" in d.columns else a["x_lead"] - a["x_obs"] - 0.5 * ll - 0.5 * fl
+    gap_sim = a["x_lead"] - x_sim - 0.5 * ll - 0.5 * fl
+    param_str = ", ".join(f"{n}={theta[i]:.3g}" for i, n in enumerate(spec.param_names))
+    type_label = ep.follower_type.upper() if ep.follower_type != "av" else "AV"
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+    fig.suptitle(
+        f"Follower {ep.follower_id} -> Leader {ep.leader_id}  |  {type_label}  |  "
+        f"{ep.end_t - ep.start_t:.1f}s\n{spec.pretty}: {param_str}",
+        fontsize=10,
+    )
+    t = a["t"]
+    axes[0].plot(t, a["x_obs"], label="Observed", linewidth=2)
+    axes[0].plot(t, x_sim, "--", label=f"Simulated ({spec.pretty})", linewidth=2)
+    axes[0].plot(t, a["x_lead"], ":", label="Leader", linewidth=1.5, alpha=0.8)
+    axes[0].set_ylabel("Position (m)")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].plot(t, a["v_obs"], label="Observed", linewidth=2)
+    axes[1].plot(t, v_sim, "--", label=f"Simulated ({spec.pretty})", linewidth=2)
+    axes[1].plot(t, a["v_lead"], ":", label="Leader (Observed)", linewidth=1.5, alpha=0.8)
+    axes[1].set_ylabel("Speed (m/s)")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(t, gap_obs, label="Observed gap", linewidth=2)
+    axes[2].plot(t, gap_sim, "--", label=f"Simulated gap ({spec.pretty})", linewidth=2)
+    axes[2].set_xlabel("Time (s)")
+    axes[2].set_ylabel("Gap (m)")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def make_generic_plotter(spec: ModelSpec):
+    """Return a plot callback that closes over ``spec``."""
+    def _plot(ep, theta, aux, output_path):
+        generic_episode_plot(spec, ep, theta, aux, output_path)
+    return _plot
+
+
+def _episode_plot_path(plots_dir: str, rd: Dict) -> str:
+    """Filename keyed by follower/leader vehicle IDs."""
+    return os.path.join(
+        plots_dir,
+        f"follower_{rd['follower_id']}_leader_{rd['leader_id']}_{rd['follower_type']}.png",
+    )
+
+
+def _make_episode_plots(to_cal, results, spec, results_dir, dataset_name) -> None:
+    """Plot calibrated episodes (all by default; see MAX_PLOT_EPISODES)."""
+    plotter = spec.plot if spec.plot is not None else make_generic_plotter(spec)
+    if not getattr(idm, "MATPLOTLIB_AVAILABLE", False):
         return
     if not getattr(idm, "PLOT_COMPARISONS", False):
         return
+
+    max_n = getattr(idm, "MAX_PLOT_EPISODES", None)
+    batch = results if max_n is None else results[: int(max_n)]
+
     plots_dir = os.path.join(results_dir, "comparison_plots", str(dataset_name))
     os.makedirs(plots_dir, exist_ok=True)
-    for rd in results[:max_plots]:
+    n_ok = 0
+    for rd in batch:
         ep = to_cal[rd["episode_idx"] - 1]
         theta = np.array([rd[p] for p in spec.param_names], dtype=float)
-        out = os.path.join(plots_dir, f"episode_{int(rd['episode_idx'])}_{rd['follower_type']}.png")
+        out = _episode_plot_path(plots_dir, rd)
         try:
-            spec.plot(ep, theta, spec.aux_for(ep), out)
+            plotter(ep, theta, spec.aux_for(ep), out)
+            n_ok += 1
         except Exception as e:
-            print(f"   [WARN] plot failed for episode {rd['episode_idx']}: {e}")
+            print(f"   [WARN] plot failed follower {rd['follower_id']}: {e}")
+    print(f"   Saved {n_ok}/{len(batch)} comparison plots -> {plots_dir}")
+
+
+# ------------------------------------------------------------------ summary plots (post-calibration aggregates)
+_CLASS_ORDER = ["small", "large", "av"]
+_CLASS_LABELS = {"small": "Small", "large": "Large", "av": "AV"}
+_CLASS_COLORS = {"small": "#4C72B0", "large": "#DD8452", "av": "#55A868"}
+
+
+def _class_subset(res_df: pd.DataFrame) -> pd.DataFrame:
+    return res_df[res_df["follower_type"].isin(_CLASS_ORDER)].copy()
+
+
+def _boxplot_by_class(ax, data: pd.DataFrame, col: str, ylabel: str = "") -> None:
+    """Simple boxplot of ``col`` for small / large / AV."""
+    groups = [_CLASS_LABELS[c] for c in _CLASS_ORDER
+              if c in data["follower_type"].values and data.loc[data["follower_type"] == c, col].notna().any()]
+    if not groups:
+        ax.set_visible(False)
+        return
+    vals = [data.loc[data["follower_type"] == c, col].dropna().to_numpy()
+            for c in _CLASS_ORDER if _CLASS_LABELS[c] in groups]
+    bp = ax.boxplot(vals, labels=groups, patch_artist=True, showfliers=True)
+    for patch, c in zip(bp["boxes"], [k for k in _CLASS_ORDER if _CLASS_LABELS[k] in groups]):
+        patch.set_facecolor(_CLASS_COLORS[c])
+        patch.set_alpha(0.7)
+    ax.set_ylabel(ylabel or col)
+    ax.grid(True, axis="y", alpha=0.3)
+
+
+def _save_fig(fig, path: str) -> None:
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    idm.plt.close(fig)
+
+
+def _plot_param_distributions(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    plt = idm.plt
+    n = len(spec.param_names)
+    ncols = min(3, n)
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 3.8 * nrows), squeeze=False)
+    fig.suptitle(f"{spec.pretty}: calibrated parameter distributions by vehicle class", fontsize=12)
+    for i, pname in enumerate(spec.param_names):
+        ax = axes[i // ncols][i % ncols]
+        _boxplot_by_class(ax, sub, pname, pname)
+    for j in range(n, nrows * ncols):
+        axes[j // ncols][j % ncols].set_visible(False)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_param_distributions.png"))
+
+
+def _plot_error_distributions(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    plt = idm.plt
+    metrics = [("rmse", "RMSE (m)"), ("mae", "MAE (m)"), ("r_squared", "R²"), ("fitness", "Fitness")]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    fig.suptitle(f"{spec.pretty}: calibration error metrics by vehicle class", fontsize=12)
+    for ax, (col, ylab) in zip(axes.ravel(), metrics):
+        if col in sub.columns:
+            _boxplot_by_class(ax, sub, col, ylab)
+        else:
+            ax.set_visible(False)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_error_distributions.png"))
+
+
+def _plot_rmse_vs_mae(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    plt = idm.plt
+    fig, ax = plt.subplots(figsize=(7, 6))
+    for c in _CLASS_ORDER:
+        mask = sub["follower_type"] == c
+        if not mask.any():
+            continue
+        ax.scatter(sub.loc[mask, "rmse"], sub.loc[mask, "mae"],
+                   c=_CLASS_COLORS[c], label=_CLASS_LABELS[c], alpha=0.65, s=36, edgecolors="none")
+    ax.set_xlabel("RMSE (m)")
+    ax.set_ylabel("MAE (m)")
+    ax.set_title(f"{spec.pretty}: per-episode fit quality")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_rmse_vs_mae.png"))
+
+
+def _plot_regime_counts(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    if "regime" not in sub.columns or sub["regime"].nunique() <= 1:
+        return
+    plt = idm.plt
+    ct = (sub.groupby(["follower_type", "regime"]).size()
+          .unstack(fill_value=0).reindex(_CLASS_ORDER).fillna(0))
+    if ct.empty:
+        return
+    fig, ax = plt.subplots(figsize=(max(8, 1.2 * len(ct.columns)), 5))
+    x = np.arange(len(_CLASS_ORDER))
+    width = 0.8 / max(len(ct.columns), 1)
+    for i, regime in enumerate(ct.columns):
+        offset = (i - (len(ct.columns) - 1) / 2) * width
+        ax.bar(x + offset, ct[regime].to_numpy(), width=width, label=str(regime))
+    ax.set_xticks(x)
+    ax.set_xticklabels([_CLASS_LABELS[c] for c in _CLASS_ORDER])
+    ax.set_ylabel("Episode count")
+    ax.set_title(f"{spec.pretty}: traffic regime mix by vehicle class")
+    ax.legend(title="Regime", fontsize=8)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_regime_counts.png"))
+
+
+def _plot_identifiability_cv(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    """Restart dispersion CV = std/|mean| per parameter (multi-start GA)."""
+    std_cols = [f"{p}_std" for p in spec.param_names if f"{p}_std" in sub.columns]
+    if not std_cols:
+        return
+    plt = idm.plt
+    n = len(spec.param_names)
+    ncols = min(3, n)
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 3.8 * nrows), squeeze=False)
+    fig.suptitle(f"{spec.pretty}: practical identifiability (restart CV = std/|mean|)", fontsize=11)
+    for i, pname in enumerate(spec.param_names):
+        ax = axes[i // ncols][i % ncols]
+        scol = f"{pname}_std"
+        if scol not in sub.columns:
+            ax.set_visible(False)
+            continue
+        tmp = sub[["follower_type", pname, scol]].copy()
+        tmp["cv"] = tmp[scol] / np.maximum(np.abs(tmp[pname]), 1e-9)
+        _boxplot_by_class(ax, tmp, "cv", f"CV({pname})")
+    for j in range(n, nrows * ncols):
+        axes[j // ncols][j % ncols].set_visible(False)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_identifiability_cv.png"))
+
+
+def _plot_errors_by_dataset(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    if "dataset" not in sub.columns or sub["dataset"].nunique() <= 1:
+        return
+    plt = idm.plt
+    datasets = sorted(sub["dataset"].unique())
+    fig, ax = plt.subplots(figsize=(max(8, 2 * len(datasets)), 5))
+    positions, labels, data, colors = [], [], [], []
+    pos = 0
+    for ds in datasets:
+        for c in _CLASS_ORDER:
+            vals = sub.loc[(sub["dataset"] == ds) & (sub["follower_type"] == c), "rmse"].dropna()
+            if len(vals) == 0:
+                continue
+            positions.append(pos)
+            labels.append(f"{ds}\n{_CLASS_LABELS[c]}")
+            data.append(vals.to_numpy())
+            colors.append(_CLASS_COLORS[c])
+            pos += 1
+        pos += 0.5  # gap between datasets
+    if not data:
+        plt.close(fig)
+        return
+    bp = ax.boxplot(data, labels=labels, patch_artist=True, showfliers=True)
+    for patch, col in zip(bp["boxes"], colors):
+        patch.set_facecolor(col)
+        patch.set_alpha(0.7)
+    ax.set_ylabel("RMSE (m)")
+    ax.set_title(f"{spec.pretty}: RMSE by dataset and vehicle class")
+    ax.tick_params(axis="x", labelsize=8)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_rmse_by_dataset.png"))
+
+
+def _plot_param_correlation(sub: pd.DataFrame, spec: ModelSpec, out_dir: str) -> None:
+    """Pairwise correlation heatmap of calibrated parameters (pooled)."""
+    cols = [p for p in spec.param_names if p in sub.columns]
+    if len(cols) < 2:
+        return
+    plt = idm.plt
+    corr = sub[cols].corr()
+    fig, ax = plt.subplots(figsize=(max(6, len(cols)), max(5, len(cols) - 1)))
+    im = ax.imshow(corr.to_numpy(), cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    ax.set_xticks(range(len(cols)))
+    ax.set_yticks(range(len(cols)))
+    ax.set_xticklabels(cols, rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(cols, fontsize=9)
+    for i in range(len(cols)):
+        for j in range(len(cols)):
+            ax.text(j, i, f"{corr.iloc[i, j]:.2f}", ha="center", va="center", fontsize=7)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(f"{spec.pretty}: parameter correlation (all episodes)")
+    fig.tight_layout()
+    _save_fig(fig, os.path.join(out_dir, "fig_param_correlation.png"))
+
+
+def _make_summary_plots(res_df: pd.DataFrame, spec: ModelSpec, results_dir: str) -> None:
+    """Aggregate diagnostic figures written to ``summary_plots/``."""
+    if not getattr(idm, "MATPLOTLIB_AVAILABLE", False):
+        return
+    if not getattr(idm, "PLOT_SUMMARY", True):
+        return
+    sub = _class_subset(res_df)
+    if sub.empty:
+        return
+
+    out_dir = os.path.join(results_dir, "summary_plots")
+    os.makedirs(out_dir, exist_ok=True)
+    plt = idm.plt
+    try:
+        _plot_param_distributions(sub, spec, out_dir)
+        _plot_error_distributions(sub, spec, out_dir)
+        _plot_rmse_vs_mae(sub, spec, out_dir)
+        _plot_regime_counts(sub, spec, out_dir)
+        _plot_identifiability_cv(sub, spec, out_dir)
+        _plot_errors_by_dataset(sub, spec, out_dir)
+        _plot_param_correlation(sub, spec, out_dir)
+        print(f" Summary plots -> {out_dir}/")
+    except Exception as e:
+        print(f" WARNING: summary plots failed: {e}")
+        plt.close("all")
 
 
 def run_calibration(spec: ModelSpec):
@@ -502,6 +791,9 @@ def run_calibration(spec: ModelSpec):
         perf = _class_perf_table(res_df)
         idm.print_formatted_table(perf, f"{spec.pretty}: Performance by Vehicle Class")
         perf.to_csv(os.path.join(results_dir, f"{spec.name}_performance_table.csv"), index=False)
+
+        # ---- aggregate summary plots (distributions, errors, identifiability, …) ----
+        _make_summary_plots(res_df, spec, results_dir)
 
         # ---- statistics (pooled + by regime) ----
         if STATS_TESTS_AVAILABLE:
